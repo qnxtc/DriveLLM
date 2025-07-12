@@ -30,12 +30,14 @@ ACTIONS_DESCRIPTION = {
 
 class getAvailableActions:
     def __init__(self, env: Any) -> None:
-        self.env = env
+        # 关键修改：获取原始环境（解除RecordVideo等包装器）
+        self.env = env.unwrapped  # 重点：通过unwrapped获取原始环境
 
     @prompts(name='Get Available Actions',
              description="""Useful before you make decisions, this tool let you know what are your available actions in this situation. The input to this tool should be 'ego'.""")
     def inference(self, input: str) -> str:
         outputPrefix = 'You can ONLY use one of the following actions: \n'
+        # 调用原始环境的get_available_actions()方法
         availableActions = self.env.get_available_actions()
         for action in availableActions:
             outputPrefix += ACTIONS_ALL[action] + \
@@ -60,8 +62,6 @@ class isActionSafe:
     def __init__(self) -> None:
         pass
 
-    # @prompts(name='Check Action Safety',
-    #          description="""Use this tool when you want to check the proposed action's safety. The input to this tool should be a string, which is ONLY the action name.""")
     @prompts(name='Decision-making Instructions',
              description="""This tool gives you a brief intruduction about how to ensure that the action you make is safe. The input to this tool should be a string, which is ONLY the action name.""")
     def inference(self, action: str) -> str:

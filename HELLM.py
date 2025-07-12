@@ -1,100 +1,100 @@
 import os
-# 替换为你的代理软件的实际端口（例如7890、8080等）
-PROXY_PORT = "5131"  # 重点：这里必须与代理软件的端口一致！
-os.environ["http_proxy"] = "http://212.50.248.243"  # 替换为你的代理
-os.environ["https_proxy"] = "http://212.50.248.243"
-
-# # 第二步：禁用 SSL 验证（可选，仅测试用）
-import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
-
-
-
+import time
 import yaml
 import numpy as np
 import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
-from langchain.chat_models import AzureChatOpenAI, ChatOpenAI
+from typing import Optional, List, Mapping, Any
 
-from scenario.scenario import Scenario
-from LLMDriver.driverAgent import DriverAgent
-from LLMDriver.outputAgent import OutputParser
-from LLMDriver.customTools import (
-    getAvailableActions,
-    getAvailableLanes,
-    getLaneInvolvedCar,
-    isChangeLaneConflictWithCar,
-    isAccelerationConflictWithCar,
-    isKeepSpeedConflictWithCar,
-    isDecelerationSafe,
-    isActionSafe,
-)
+# 导入火山方舟官方SDK
+from volcenginesdkarkruntime import Ark
+# 导入LangChain基础类
+from langchain.llms.base import LLM
 
-# 手动注册 highway-v0 环境（确保环境能被识别）
+# 禁用SSL验证（可选，仅测试用）
+import ssl
+
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# 手动注册highway-v0环境
 from gymnasium.envs.registration import register
+
 register(
     id='highway-v0',
     entry_point='highway_env.envs:HighwayEnv',
 )
 
-# 加载OpenAI配置
-OPENAI_CONFIG = yaml.load(open('config.yaml'), Loader=yaml.FullLoader)
 
-# 初始化LLM模型
-if OPENAI_CONFIG['OPENAI_API_TYPE'] == 'azure':
-    os.environ["OPENAI_API_TYPE"] = OPENAI_CONFIG['OPENAI_API_TYPE']
-    os.environ["OPENAI_API_VERSION"] = OPENAI_CONFIG['AZURE_API_VERSION']
-    os.environ["OPENAI_API_BASE"] = OPENAI_CONFIG['AZURE_API_BASE']
-    os.environ["OPENAI_API_KEY"] = OPENAI_CONFIG['AZURE_API_KEY']
-    llm = AzureChatOpenAI(
-        deployment_name=OPENAI_CONFIG['AZURE_MODEL'],
-        temperature=0,
-        max_tokens=1024,
-        request_timeout=60
-    )
-elif OPENAI_CONFIG['OPENAI_API_TYPE'] == 'openai':
-    os.environ["OPENAI_API_KEY"] = OPENAI_CONFIG['OPENAI_KEY']
-    llm = ChatOpenAI(
-        temperature=0,
-        model_name='gpt-3.5-turbo-1106',  # 确保模型支持8k+上下文
-        max_tokens=1024,
-        request_timeout=60
-    )
+# 定义火山方舟Doubao模型的LLM包装器（基于官方SDK）
+class VolcanoDoubaoLLM(LLM):
+    api_key: str
+    model_name: str  # 模型ID，如'doubao-seed-1-6-250615'
+
+    @property
+    def _llm_type(self) -> str:
+        return "volcano-doubao"
+
+    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+        # 初始化火山方舟客户端
+        client = Ark(api_key=self.api_key)
+
+        # 调用Doubao模型
+        completion = client.chat.completions.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,  # 保持决策确定性
+            max_tokens=1024
+        )
+
+        # 返回模型响应内容
+        return completion.choices[0].message.content
+
+    @property
+    def _identifying_params(self) -> Mapping[str, Any]:
+        return {
+            "model_name": self.model_name
+        }
+
+
+# 加载火山方舟配置（指定UTF-8编码避免解码错误）
+VOLCANO_CONFIG = yaml.load(open('config.yaml', encoding='utf-8'), Loader=yaml.FullLoader)
+
+# 初始化LLM模型（Doubao-Seed-1.6）
+llm = VolcanoDoubaoLLM(
+    api_key=VOLCANO_CONFIG['VOLCANO_API_KEY'],
+    model_name=VOLCANO_CONFIG['VOLCANO_MODEL']
+)
 
 # 基础设置
 vehicleCount = 15
 
-# 环境配置（使用嵌套格式，适配原始环境的configure方法）
+# 环境配置
 config = {
-    "observation": {
-        "type": "Kinematics",
-        "features": ["presence", "x", "y", "vx", "vy"],
-        "absolute": True,
-        "normalize": False,
+    "observation"      : {
+        "type"          : "Kinematics",
+        "features"      : ["presence", "x", "y", "vx", "vy"],
+        "absolute"      : True,
+        "normalize"     : False,
         "vehicles_count": vehicleCount,
-        "see_behind": True,
+        "see_behind"    : True,
     },
-    "action": {
-        "type": "DiscreteMetaAction",
+    "action"           : {
+        "type"         : "DiscreteMetaAction",
         "target_speeds": np.linspace(0, 32, 9),
     },
-    "duration": 40,
-    "vehicles_density": 2,
+    "duration"         : 40,
+    "vehicles_density" : 2,
     "show_trajectories": True,
-    "render_agent": True,
+    "render_agent"     : True,
 }
 
-# 环境初始化流程（关键修改）
-# 1. 创建环境（不传入配置参数）
+# 环境初始化流程
 env = gym.make('highway-v0', render_mode="rgb_array")
-# 2. 获取原始环境（解除gymnasium包装器）
 env = env.unwrapped
-# 3. 应用配置
 env.configure(config)
-# 4. 重置环境使配置生效
 obs, info = env.reset()
 
-# 视频记录（在配置后包装，避免影响原始环境）
+# 视频记录
 env = RecordVideo(
     env, './results-video',
     name_prefix=f"highwayv0"
@@ -106,11 +106,24 @@ env.render()
 if not os.path.exists('results-db/'):
     os.mkdir('results-db')
 database = f"results-db/highwayv0.db"
+from scenario.scenario import Scenario  # 导入Scenario类
+
 sce = Scenario(vehicleCount, database)
 
-# 工具模型初始化（使用配置后的环境）
+# 工具模型初始化
+from LLMDriver.customTools import (
+    getAvailableActions,
+    getAvailableLanes,
+    getLaneInvolvedCar,
+    isChangeLaneConflictWithCar,
+    isAccelerationConflictWithCar,
+    isKeepSpeedConflictWithCar,
+    isDecelerationSafe,
+    isActionSafe,
+)
+
 toolModels = [
-    getAvailableActions(env),  # 传入配置后的env
+    getAvailableActions(env),
     getAvailableLanes(sce),
     getLaneInvolvedCar(sce),
     isChangeLaneConflictWithCar(sce),
@@ -119,6 +132,9 @@ toolModels = [
     isDecelerationSafe(sce),
     isActionSafe(),
 ]
+
+from LLMDriver.driverAgent import DriverAgent
+from LLMDriver.outputAgent import OutputParser
 
 DA = DriverAgent(llm, toolModels, sce, verbose=True)
 outputParser = OutputParser(sce, llm)
@@ -134,9 +150,8 @@ try:
         output = outputParser.agentRun(da_output)
         env.render()
         env.unwrapped.automatic_rendering_callback = env.video_recorder.capture_frame()
-        # 执行动作（注意：新版gymnasium的step返回值为(obs, reward, terminated, truncated, info)）
         obs, reward, terminated, truncated, info = env.step(output["action_id"])
-        done = terminated or truncated  # 兼容旧版done逻辑
+        done = terminated or truncated
         print(output)
         frame += 1
 finally:

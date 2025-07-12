@@ -1,50 +1,15 @@
-# **************************************
-# --*-- coding: utf-8 --*--
-# @Time    : 2025-07-10
-# @Author  : white
-# @FileName: test.py
-# @Software: PyCharm
-# **************************************
-def test_gpt():
-    import requests
-    import os
+import os
+from volcenginesdkarkruntime import Ark
 
-    # 禁用代理
-    os.environ.pop("HTTP_PROXY", None)
-    os.environ.pop("HTTPS_PROXY", None)
+# 直接设置您的方舟API Key
+client = Ark(api_key="ca73283a-d4f5-4f15-9d6a-c117b712592d")
 
-    # 设置 API Key
-    api_key = "sk-..."  # 注意保密
+completion = client.chat.completions.create(
+    # 使用有效的模型ID（移除尖括号或替换为其他模型）
+    model="doubao-seed-1-6-250615",  # 或者替换为其他已知有效的模型ID
+    messages=[
+        {"role": "user", "content": "你好"}
+    ]
+)
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    params = {
-        "model": "gpt-3.5-turbo-1106",
-        "messages": [
-            {"role": "user", "content": "Who are you?"}
-        ]
-    }
-
-    try:
-        response = requests.post(
-            "https://api.ohmygpt.com/v1/chat/completions",
-            headers=headers,
-            json=params,
-            timeout=20
-        )
-
-        if response.status_code == 200:
-            res = response.json()
-            print("GPT response:", res['choices'][0]['message']['content'])
-        else:
-            print("Request failed:", response.status_code)
-            print("Response:", response.text)
-
-    except requests.exceptions.RequestException as e:
-        print("An error occurred:", e)
-
-# 执行
-test_gpt()
+print(completion.choices[0].message)
